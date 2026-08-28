@@ -1,5 +1,46 @@
 # Yad2 Apartment Alerts
 
+> ## ⚠️ The scraper does not work, and the hourly schedule is disabled
+>
+> **Use Yad2's own built-in alerts instead** — save a search on
+> [yad2.co.il](https://www.yad2.co.il/realestate/rent) or in the Yad2 app and
+> turn on alerts. It's free, official, and fires up to every 15 minutes, which
+> is better than the hourly check this repo was built to do.
+>
+> ### Why
+>
+> Yad2 is protected by **Radware Bot Manager**. A probe run from GitHub Actions
+> on 2026-08-28 (`scripts/probe.ts`, still runnable via the "Probe Yad2"
+> workflow) tried seven different access strategies:
+>
+> | Strategy | Result |
+> |---|---|
+> | HTML page, browser headers | redirected to `validate.perfdrive.com` — CAPTCHA |
+> | HTML page, no headers | redirected to `validate.perfdrive.com` — CAPTCHA |
+> | `gw.yad2.co.il/realestate-feed/rent` | CAPTCHA |
+> | `gw.yad2.co.il/realestate-feed/rent/map` | CAPTCHA |
+> | `gw.yad2.co.il/feed-search-legacy/...` | CAPTCHA |
+> | `www.yad2.co.il/api/pre-load/getFeedIndex/...` | "Radware Bot Manager Block" |
+> | `www.yad2.co.il/api/feed/get` | Radware loader page |
+>
+> Seven for seven. This isn't a parsing bug or a wrong URL — every route is
+> behind the same commercial bot-protection product, which fingerprints the
+> browser and the network. Requests from CI/cloud IP ranges are exactly what it
+> exists to stop, so a headless browser here would very likely be blocked too.
+>
+> Getting past it would mean deliberately defeating an access control the site
+> owner deployed on purpose — browser-fingerprint spoofing, residential proxy
+> rotation, or a paid third-party service whose whole business is doing that.
+> That's not worth building for a personal apartment search when the site
+> already offers the exact feature for free.
+>
+> ### What still works here
+>
+> The email delivery, deduplication, scheduling and diagnostics are all built
+> and verified — only the Yad2 fetch fails. If you point `lib/yad2.ts` at a
+> data source that actually answers, everything downstream works as-is.
+
+
 Checks Yad2 every hour for rental apartments near **Kfar HaRif** (≤ ₪5500/month,
 within ~20km) and emails you anything new.
 

@@ -1,8 +1,13 @@
 name: Yad2 hourly check
 
+# The hourly schedule is DISABLED: Yad2 sits behind Radware Bot Manager, which
+# blocks every request from this runner (see README "Why the scraper is
+# disabled"). Leaving it on would just fail hourly and email a failure notice
+# twice a day forever. Re-enable by uncommenting once there's a data source
+# that actually answers.
 on:
-  schedule:
-    - cron: "0 * * * *"
+  # schedule:
+  #   - cron: "0 * * * *"
   workflow_dispatch:
     inputs:
       test_mode:
