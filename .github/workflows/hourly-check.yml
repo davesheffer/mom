@@ -5,12 +5,65 @@ on:
     - cron: "0 * * * *"
   workflow_dispatch: {}
 
+# Needed so the standalone mode can commit the "already alerted" state file back.
+permissions:
+  contents: write
+
+# Don't let a slow run overlap with the next hour's run and double-send.
+concurrency:
+  group: yad2-check
+  cancel-in-progress: false
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      # If you deployed to Vercel, set this secret and we just ping it.
+      # If it's empty, the check runs right here in Actions instead.
+      CHECK_URL: ${{ secrets.YAD2_CHECK_URL }}
     steps:
-      - name: Call /api/check
+      - name: Ping the deployed Vercel endpoint
+        if: env.CHECK_URL != ''
         run: |
           curl --fail --silent --show-error \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "${{ secrets.YAD2_CHECK_URL }}"
+            "$CHECK_URL"
+
+      - name: Check out the repo
+        if: env.CHECK_URL == ''
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        if: env.CHECK_URL == ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        if: env.CHECK_URL == ''
+        run: npm ci
+
+      - name: Run the check
+        if: env.CHECK_URL == ''
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+          YAD2_SEARCH_URL: ${{ vars.YAD2_SEARCH_URL }}
+          MAX_RENT: ${{ vars.MAX_RENT }}
+          RADIUS_KM: ${{ vars.RADIUS_KM }}
+        run: npm run check
+
+      - name: Remember which listings were already sent
+        if: env.CHECK_URL == ''
+        run: |
+          if [ -n "$(git status --porcelain .state)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .state
+            git commit -m "chore: update seen listings [skip ci]"
+            git push
+          else
+            echo "No new listings to record."
+          fi

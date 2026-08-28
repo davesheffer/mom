@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchListings } from "@/lib/yad2";
-import { filterNewIds, markSeen, shouldSendFailureAlert } from "@/lib/storage";
-import { sendEmail, buildNewListingsEmail } from "@/lib/notify";
+import { runCheck, reportFailure } from "@/lib/check";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -26,39 +24,12 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const listings = await fetchListings();
-    const ids = listings.map((l) => l.id);
-    const newIds = await filterNewIds(ids);
-    const newIdSet = new Set(newIds);
-    const newListings = listings.filter((l) => newIdSet.has(l.id));
-
-    if (newListings.length > 0) {
-      const { subject, text, html } = buildNewListingsEmail(newListings);
-      await sendEmail(subject, text, html);
-      await markSeen(newIds);
-    }
-
-    return NextResponse.json({
-      checked: listings.length,
-      new: newListings.length,
-      newIds,
-    });
+    const result = await runCheck();
+    return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("yad2 check failed:", message);
-
-    try {
-      if (await shouldSendFailureAlert()) {
-        await sendEmail(
-          "⚠️ Yad2 apartment checker failed",
-          `The Yad2 apartment checker failed: ${message}`,
-          `<p>The Yad2 apartment checker failed:</p><pre>${message}</pre>`
-        );
-      }
-    } catch (notifyErr) {
-      console.error("failed to send failure alert:", notifyErr);
-    }
-
+    await reportFailure(message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
