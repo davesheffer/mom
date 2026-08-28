@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchListings } from "@/lib/yad2";
 import { filterNewIds, markSeen, shouldSendFailureAlert } from "@/lib/storage";
-import { sendWhatsApp, buildNewListingsMessage } from "@/lib/notify";
+import { sendEmail, buildNewListingsEmail } from "@/lib/notify";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -33,7 +33,8 @@ export async function GET(req: NextRequest) {
     const newListings = listings.filter((l) => newIdSet.has(l.id));
 
     if (newListings.length > 0) {
-      await sendWhatsApp(buildNewListingsMessage(newListings));
+      const { subject, text, html } = buildNewListingsEmail(newListings);
+      await sendEmail(subject, text, html);
       await markSeen(newIds);
     }
 
@@ -48,7 +49,11 @@ export async function GET(req: NextRequest) {
 
     try {
       if (await shouldSendFailureAlert()) {
-        await sendWhatsApp(`⚠️ Yad2 apartment checker failed: ${message}`);
+        await sendEmail(
+          "⚠️ Yad2 apartment checker failed",
+          `The Yad2 apartment checker failed: ${message}`,
+          `<p>The Yad2 apartment checker failed:</p><pre>${message}</pre>`
+        );
       }
     } catch (notifyErr) {
       console.error("failed to send failure alert:", notifyErr);

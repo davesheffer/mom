@@ -1,9 +1,9 @@
 # Yad2 Apartment Alerts
 
 Checks Yad2 every hour for rental apartments near **Kfar HaRif** (≤ ₪5500/month,
-within ~20km) and sends a **WhatsApp** message for anything new. Deploys on
-Vercel; the hourly trigger runs via a free GitHub Actions schedule (Vercel's
-own Cron Jobs only fire once/day on the free Hobby plan).
+within ~20km) and sends an **email** for anything new. Deploys on Vercel; the
+hourly trigger runs via a free GitHub Actions schedule (Vercel's own Cron Jobs
+only fire once/day on the free Hobby plan).
 
 ## How it works
 
@@ -13,7 +13,8 @@ own Cron Jobs only fire once/day on the free Hobby plan).
 2. `/api/check` fetches the Yad2 rental search page, pulls listing data out of
    the page's embedded JSON, filters by price and distance from Kfar HaRif,
    and diffs against what it's already alerted on (stored in Upstash Redis).
-3. Anything new gets sent to your WhatsApp via [CallMeBot](https://www.callmebot.com/blog/free-api-whatsapp-messages/).
+3. Anything new gets emailed to you via your Gmail account (SMTP, using an
+   app password).
 
 ## Important caveat: Yad2 has anti-bot protection
 
@@ -23,7 +24,7 @@ app fetches the page directly with browser-like headers and parses its
 if Yad2 starts blocking these requests (or changes their page structure), the
 `/api/check` endpoint will start failing. When that happens:
 
-- You'll get **one** WhatsApp alert about it (throttled to at most once every
+- You'll get **one** email alert about it (throttled to at most once every
   12 hours, so it won't spam you).
 - Check the Vercel function logs (Project → Deployments → your deployment →
   Functions → `/api/check`) for the actual error.
@@ -35,11 +36,14 @@ if Yad2 starts blocking these requests (or changes their page structure), the
 
 ## Setup
 
-### 1. CallMeBot (WhatsApp)
+### 1. Gmail app password (email sending)
 
-1. Save `+34 644 84 71 89` as a phone contact.
-2. Send it a WhatsApp message: `I allow callmebot to send me messages`
-3. You'll get a reply with your API key.
+1. Turn on 2-Step Verification on the Google account you want to send from:
+   https://myaccount.google.com/security
+2. Create an app password: https://myaccount.google.com/apppasswords
+   (app: "Mail", device: "Other" → name it e.g. `yad2-alerts`)
+3. Google shows you a 16-character password once — copy it. That's
+   `GMAIL_APP_PASSWORD` (not your normal Gmail password).
 
 ### 2. Upstash Redis (dedup storage)
 
@@ -57,7 +61,8 @@ and copy the REST URL/token in yourself.)
 2. In Vercel, "Add New Project" → import this repo.
 3. Set environment variables (see `.env.example`):
    - `CRON_SECRET` — any random string, e.g. `openssl rand -hex 32`
-   - `CALLMEBOT_PHONE`, `CALLMEBOT_APIKEY`
+   - `GMAIL_USER`, `GMAIL_APP_PASSWORD` (and optionally `ALERT_EMAIL_TO` if
+     you want alerts sent somewhere other than `GMAIL_USER` itself)
    - `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` (skip if using the
      Marketplace integration above, it sets these for you)
    - Optionally `YAD2_SEARCH_URL`, `MAX_RENT`, `RADIUS_KM`, `MAX_PAGES`
@@ -81,9 +86,9 @@ curl -H "Authorization: Bearer YOUR_CRON_SECRET" https://your-app.vercel.app/api
 ```
 
 You should get back JSON like `{"checked": 12, "new": 3, "newIds": [...]}`,
-and (if `new > 0`) a WhatsApp message. Run it twice in a row — the second
-run's `new` should drop to 0 for anything already reported, since it's now
-stored in Redis.
+and (if `new > 0`) an email. Run it twice in a row — the second run's `new`
+should drop to 0 for anything already reported, since it's now stored in
+Redis.
 
 ## Tuning the search
 
