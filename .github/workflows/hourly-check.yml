@@ -3,7 +3,12 @@ name: Yad2 hourly check
 on:
   schedule:
     - cron: "0 * * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: "Test run: always email me (even if nothing new), and don't mark listings as seen"
+        type: boolean
+        default: false
 
 # Needed so the standalone mode can commit the "already alerted" state file back.
 permissions:
@@ -21,31 +26,34 @@ jobs:
       # If you deployed to Vercel, set this secret and we just ping it.
       # If it's empty, the check runs right here in Actions instead.
       CHECK_URL: ${{ secrets.YAD2_CHECK_URL }}
+      TEST_MODE: ${{ inputs.test_mode }}
     steps:
+      # A test run always executes locally: it needs the diagnostics, and the
+      # deployed endpoint has no test mode.
       - name: Ping the deployed Vercel endpoint
-        if: env.CHECK_URL != ''
+        if: env.CHECK_URL != '' && env.TEST_MODE != 'true'
         run: |
           curl --fail --silent --show-error \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             "$CHECK_URL"
 
       - name: Check out the repo
-        if: env.CHECK_URL == ''
+        if: env.CHECK_URL == '' || env.TEST_MODE == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Node
-        if: env.CHECK_URL == ''
+        if: env.CHECK_URL == '' || env.TEST_MODE == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
 
       - name: Install dependencies
-        if: env.CHECK_URL == ''
+        if: env.CHECK_URL == '' || env.TEST_MODE == 'true'
         run: npm ci
 
       - name: Run the check
-        if: env.CHECK_URL == ''
+        if: env.CHECK_URL == '' || env.TEST_MODE == 'true'
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
@@ -53,10 +61,16 @@ jobs:
           YAD2_SEARCH_URL: ${{ vars.YAD2_SEARCH_URL }}
           MAX_RENT: ${{ vars.MAX_RENT }}
           RADIUS_KM: ${{ vars.RADIUS_KM }}
-        run: npm run check
+        run: |
+          if [ "$TEST_MODE" = "true" ]; then
+            npm run check -- --test
+          else
+            npm run check
+          fi
 
+      # Skipped for test runs, which deliberately leave the seen-set untouched.
       - name: Remember which listings were already sent
-        if: env.CHECK_URL == ''
+        if: env.CHECK_URL == '' && env.TEST_MODE != 'true'
         run: |
           if [ -n "$(git status --porcelain .state)" ]; then
             git config user.name "github-actions[bot]"

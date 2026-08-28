@@ -128,20 +128,76 @@ function extractNextData(html: string): unknown {
   return JSON.parse(match[1]);
 }
 
-async function fetchPage(baseUrl: string, page: number): Promise<Listing[]> {
+/**
+ * Notes from each fetch, so a failing scrape can be diagnosed from a log or a
+ * test email rather than by guessing. The parsing here was written against
+ * Yad2's public URL structure but has not been verified against a live
+ * response, so `sampleRawKeys` / `sampleRaw` matter: if the parse comes back
+ * empty, they show what the payload actually looks like.
+ */
+export interface PageDiagnostics {
+  url: string;
+  status: number | null;
+  htmlLength: number | null;
+  foundNextData: boolean;
+  candidateCount: number;
+  parsedCount: number;
+  sampleRawKeys: string[] | null;
+  sampleRaw: string | null;
+  error: string | null;
+}
+
+export interface FetchDiagnostics {
+  pages: PageDiagnostics[];
+  totalBeforeFilter: number;
+  totalAfterFilter: number;
+  maxRent: number;
+  radiusKm: number;
+  droppedByPrice: number;
+  droppedByDistance: number;
+}
+
+async function fetchPage(
+  baseUrl: string,
+  page: number
+): Promise<{ listings: Listing[]; diagnostics: PageDiagnostics }> {
   const url = new URL(baseUrl);
   url.searchParams.set("maxPrice", String(MAX_RENT));
   if (page > 1) url.searchParams.set("page", String(page));
 
+  const diagnostics: PageDiagnostics = {
+    url: url.toString(),
+    status: null,
+    htmlLength: null,
+    foundNextData: false,
+    candidateCount: 0,
+    parsedCount: 0,
+    sampleRawKeys: null,
+    sampleRaw: null,
+    error: null,
+  };
+
   const res = await fetch(url.toString(), { headers: BROWSER_HEADERS });
+  diagnostics.status = res.status;
   if (!res.ok) {
-    throw new Error(`Yad2 request failed: HTTP ${res.status}`);
+    diagnostics.error = `Yad2 request failed: HTTP ${res.status}`;
+    throw new Error(diagnostics.error);
   }
+
   const html = await res.text();
+  diagnostics.htmlLength = html.length;
+
   const nextData = extractNextData(html);
+  diagnostics.foundNextData = true;
 
   const candidates: Record<string, any>[] = [];
   collectCandidateNodes(nextData, candidates, new Set());
+  diagnostics.candidateCount = candidates.length;
+
+  if (candidates.length > 0) {
+    diagnostics.sampleRawKeys = Object.keys(candidates[0]);
+    diagnostics.sampleRaw = JSON.stringify(candidates[0]).slice(0, 1200);
+  }
 
   const seenIds = new Set<string>();
   const listings: Listing[] = [];
@@ -152,17 +208,34 @@ async function fetchPage(baseUrl: string, page: number): Promise<Listing[]> {
     seenIds.add(listing.id);
     listings.push(listing);
   }
-  return listings;
+  diagnostics.parsedCount = listings.length;
+
+  return { listings, diagnostics };
 }
 
-export async function fetchListings(): Promise<Listing[]> {
+export async function fetchListingsWithDiagnostics(): Promise<{
+  listings: Listing[];
+  diagnostics: FetchDiagnostics;
+}> {
   const baseUrl = process.env.YAD2_SEARCH_URL || DEFAULT_SEARCH_URL;
+
+  const diagnostics: FetchDiagnostics = {
+    pages: [],
+    totalBeforeFilter: 0,
+    totalAfterFilter: 0,
+    maxRent: MAX_RENT,
+    radiusKm: RADIUS_KM,
+    droppedByPrice: 0,
+    droppedByDistance: 0,
+  };
 
   const all: Listing[] = [];
   const allIds = new Set<string>();
   for (let page = 1; page <= MAX_PAGES; page++) {
-    const pageListings = await fetchPage(baseUrl, page);
+    const { listings: pageListings, diagnostics: pageDiag } = await fetchPage(baseUrl, page);
+    diagnostics.pages.push(pageDiag);
     if (pageListings.length === 0) break;
+
     let addedNew = false;
     for (const listing of pageListings) {
       if (!allIds.has(listing.id)) {
@@ -176,9 +249,25 @@ export async function fetchListings(): Promise<Listing[]> {
     if (!addedNew && page > 1) break;
   }
 
-  return all.filter((listing) => {
-    if (listing.price > MAX_RENT) return false;
-    if (listing.distanceKm != null && listing.distanceKm > RADIUS_KM) return false;
+  diagnostics.totalBeforeFilter = all.length;
+
+  const filtered = all.filter((listing) => {
+    if (listing.price > MAX_RENT) {
+      diagnostics.droppedByPrice++;
+      return false;
+    }
+    if (listing.distanceKm != null && listing.distanceKm > RADIUS_KM) {
+      diagnostics.droppedByDistance++;
+      return false;
+    }
     return true;
   });
+
+  diagnostics.totalAfterFilter = filtered.length;
+  return { listings: filtered, diagnostics };
+}
+
+export async function fetchListings(): Promise<Listing[]> {
+  const { listings } = await fetchListingsWithDiagnostics();
+  return listings;
 }
