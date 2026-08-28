@@ -122,8 +122,20 @@ export function buildTestEmail(
         `Page ${i + 1}: HTTP ${p.status ?? "?"}, ${p.htmlLength ?? "?"} bytes, ` +
           `__NEXT_DATA__ ${p.foundNextData ? "found" : "MISSING"}, ` +
           `${p.candidateCount} candidate node(s), ${p.parsedCount} parsed`,
-        `  ${p.url}`
+        `  ${p.url}`,
+        `  content-type: ${p.contentType ?? "(none)"}`
       );
+      // Defensive: this builder is the last thing standing between a failure
+      // and the user hearing about it, so it must not throw on odd input.
+      if (p.blockers && p.blockers.length > 0) {
+        summaryLines.push(`  ⚠ bot protection detected: ${p.blockers.join(", ")}`);
+      }
+      if (p.error) {
+        summaryLines.push(`  error: ${p.error}`);
+      }
+      if (p.bodySnippet) {
+        summaryLines.push(`  response starts: ${p.bodySnippet.slice(0, 400)}`);
+      }
       if (p.sampleRawKeys) {
         summaryLines.push(`  sample fields: ${p.sampleRawKeys.join(", ")}`);
       }

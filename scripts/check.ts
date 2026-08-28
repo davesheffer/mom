@@ -30,6 +30,10 @@ async function main() {
             `__NEXT_DATA__ ${p.foundNextData ? "found" : "MISSING"}, ` +
             `${p.candidateCount} candidates, ${p.parsedCount} parsed`
         );
+        console.log(`  content-type: ${p.contentType ?? "(none)"}`);
+        if (p.blockers.length > 0) console.log(`  ⚠ bot protection: ${p.blockers.join(", ")}`);
+        if (p.error) console.log(`  error: ${p.error}`);
+        if (p.bodySnippet) console.log(`  response starts: ${p.bodySnippet.slice(0, 400)}`);
         if (p.sampleRawKeys) console.log(`  sample fields: ${p.sampleRawKeys.join(", ")}`);
         if (p.sampleRaw) console.log(`  sample record: ${p.sampleRaw}`);
       }

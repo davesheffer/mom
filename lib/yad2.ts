@@ -116,16 +116,51 @@ function normalize(raw: Record<string, any>): Listing {
   };
 }
 
-function extractNextData(html: string): unknown {
+function extractNextData(html: string): unknown | null {
   const match = html.match(
     /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/
   );
-  if (!match) {
-    throw new Error(
-      "Could not find __NEXT_DATA__ in Yad2 response (page structure changed, or the request was blocked by Yad2's anti-bot protection)"
-    );
+  if (!match) return null;
+  try {
+    return JSON.parse(match[1]);
+  } catch {
+    return null;
   }
-  return JSON.parse(match[1]);
+}
+
+/** Signatures that mean a bot wall answered, rather than the data being absent. */
+const BLOCK_SIGNATURES: [string, string][] = [
+  ["captcha", "CAPTCHA challenge"],
+  ["datadome", "DataDome bot protection"],
+  ["px-captcha", "PerimeterX bot protection"],
+  ["cf-browser-verification", "Cloudflare browser check"],
+  ["just a moment", "Cloudflare interstitial"],
+  ["incapsula", "Incapsula/Imperva block"],
+  ["access denied", "generic access denial"],
+];
+
+function detectBlockers(body: string): string[] {
+  const lower = body.toLowerCase();
+  const hits = new Set<string>();
+  for (const [needle, label] of BLOCK_SIGNATURES) {
+    if (lower.includes(needle)) hits.add(label);
+  }
+  return [...hits];
+}
+
+/**
+ * Carries the diagnostics alongside the failure. Without this the interesting
+ * part — what Yad2 actually served — is lost at the throw, which is precisely
+ * when it's needed.
+ */
+export class Yad2FetchError extends Error {
+  constructor(
+    message: string,
+    public readonly diagnostics: FetchDiagnostics
+  ) {
+    super(message);
+    this.name = "Yad2FetchError";
+  }
 }
 
 /**
@@ -138,8 +173,11 @@ function extractNextData(html: string): unknown {
 export interface PageDiagnostics {
   url: string;
   status: number | null;
+  contentType: string | null;
   htmlLength: number | null;
   foundNextData: boolean;
+  blockers: string[];
+  bodySnippet: string | null;
   candidateCount: number;
   parsedCount: number;
   sampleRawKeys: string[] | null;
@@ -168,8 +206,11 @@ async function fetchPage(
   const diagnostics: PageDiagnostics = {
     url: url.toString(),
     status: null,
+    contentType: null,
     htmlLength: null,
     foundNextData: false,
+    blockers: [],
+    bodySnippet: null,
     candidateCount: 0,
     parsedCount: 0,
     sampleRawKeys: null,
@@ -179,15 +220,27 @@ async function fetchPage(
 
   const res = await fetch(url.toString(), { headers: BROWSER_HEADERS });
   diagnostics.status = res.status;
-  if (!res.ok) {
-    diagnostics.error = `Yad2 request failed: HTTP ${res.status}`;
-    throw new Error(diagnostics.error);
-  }
+  diagnostics.contentType = res.headers.get("content-type");
 
   const html = await res.text();
   diagnostics.htmlLength = html.length;
+  diagnostics.blockers = detectBlockers(html);
+  diagnostics.bodySnippet = html.slice(0, 700);
+
+  if (!res.ok) {
+    diagnostics.error = `Yad2 request failed: HTTP ${res.status}`;
+    return { listings: [], diagnostics };
+  }
 
   const nextData = extractNextData(html);
+  if (nextData === null) {
+    diagnostics.error =
+      "Could not find __NEXT_DATA__ in the Yad2 response" +
+      (diagnostics.blockers.length > 0
+        ? ` — looks like ${diagnostics.blockers.join(" / ")}`
+        : " (page structure changed, or the request was blocked)");
+    return { listings: [], diagnostics };
+  }
   diagnostics.foundNextData = true;
 
   const candidates: Record<string, any>[] = [];
@@ -234,6 +287,13 @@ export async function fetchListingsWithDiagnostics(): Promise<{
   for (let page = 1; page <= MAX_PAGES; page++) {
     const { listings: pageListings, diagnostics: pageDiag } = await fetchPage(baseUrl, page);
     diagnostics.pages.push(pageDiag);
+
+    // A first page that couldn't be read at all is a hard failure — surface it
+    // with the diagnostics attached rather than reporting "0 listings", which
+    // would look indistinguishable from a genuinely empty search.
+    if (page === 1 && pageDiag.error) {
+      throw new Yad2FetchError(pageDiag.error, diagnostics);
+    }
     if (pageListings.length === 0) break;
 
     let addedNew = false;

@@ -1,0 +1,20 @@
+name: Probe Yad2
+
+# Diagnostic only — reports what Yad2 actually serves, so the scraper can be
+# built against reality rather than a guess. Needs no secrets and sends no
+# email; read the results in the run log.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx tsx scripts/probe.ts

@@ -1,4 +1,9 @@
-import { fetchListingsWithDiagnostics, type FetchDiagnostics, type Listing } from "./yad2";
+import {
+  fetchListingsWithDiagnostics,
+  Yad2FetchError,
+  type FetchDiagnostics,
+  type Listing,
+} from "./yad2";
 import { getStorage } from "./storage";
 import { sendEmail, buildNewListingsEmail, buildTestEmail } from "./notify";
 
@@ -61,10 +66,24 @@ export async function runTest(): Promise<TestResult> {
     diagnostics = result.diagnostics;
   } catch (err) {
     error = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    // A fetch failure still carries diagnostics — that's the whole point of it
+    // being a Yad2FetchError, so don't drop them on the floor here.
+    if (err instanceof Yad2FetchError) diagnostics = err.diagnostics;
   }
 
-  const { subject, text, html } = buildTestEmail(listings, diagnostics, error);
-  await sendEmail(subject, text, html);
+  try {
+    const { subject, text, html } = buildTestEmail(listings, diagnostics, error);
+    await sendEmail(subject, text, html);
+  } catch (buildErr) {
+    // Formatting the nice report must never be the reason no report arrives.
+    const detail = buildErr instanceof Error ? (buildErr.stack ?? buildErr.message) : String(buildErr);
+    const body =
+      `The test ran, but building the detailed report failed.\n\n` +
+      `Report error:\n${detail}\n\n` +
+      `Underlying scrape error:\n${error ?? "(none — the scrape itself was fine)"}\n\n` +
+      `Listings found: ${listings.length}`;
+    await sendEmail("⚠️ Yad2 alerts test — partial result", body, `<pre>${body}</pre>`);
+  }
 
   return { scrapeOk: error === null, listings, diagnostics, error };
 }
